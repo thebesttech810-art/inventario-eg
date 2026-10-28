@@ -198,6 +198,15 @@ video.scan{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;object
 .joinrow{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}
 .joinrow .btn{flex:1}
 input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none;display:none}
+
+/* voz */
+.iconbtn.mic{gap:1px;font-size:10.5px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.iconbtn.mic[aria-pressed="true"]{background:var(--falta);border-color:var(--falta);color:#fff}
+.voicebar{display:flex;align-items:center;gap:10px;margin-top:8px;background:var(--brand-soft);border:1px solid var(--brand);border-radius:12px;padding:8px 8px 8px 12px;font-size:14px;font-weight:600;color:var(--ink)}
+.voicebar #voiceMsg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pulse{width:12px;height:12px;border-radius:50%;background:var(--falta);flex:none;animation:pl 1.2s ease-in-out infinite}
+@keyframes pl{0%,100%{transform:scale(.8);opacity:.6}50%{transform:scale(1.15);opacity:1}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
 </style>
 </head>
 <body>
@@ -243,9 +252,11 @@ input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none;display
         <input id="q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Nombre o código" aria-label="Buscar producto">
         <button type="button" class="clr" id="clr" aria-label="Borrar búsqueda" hidden>×</button>
       </div>
+      <button type="button" class="iconbtn mic" id="micb" aria-pressed="false" aria-label="Buscar por voz" hidden><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg><span>Voz</span></button>
       <button type="button" class="iconbtn" id="numk" aria-pressed="false" aria-label="Teclado numérico">123</button>
       <button type="button" class="iconbtn" id="scanb" aria-label="Escanear código de barras" hidden>Scan</button>
     </div>
+    <div class="voicebar" id="voiceBar" hidden><span class="pulse" aria-hidden="true"></span><span id="voiceMsg" role="status">Escuchando…</span><button type="button" class="btn small" id="voiceStop">Parar</button></div>
     <div class="filters" id="filters">
       <button type="button" class="chip" data-f="todos" aria-pressed="true">Todos<span class="n"></span></button>
       <button type="button" class="chip" data-f="pend" aria-pressed="false">Pendientes<span class="n"></span></button>
@@ -742,16 +753,92 @@ function toast(msg,withUndo){
 }
 
 /* ============ conteo rápido con Enter ============ */
-function quickAdd(fromScan){
-  var res=search(ui.q);if(!res)return;
-  var nqb=norm(ui.q).replace(/\s/g,""),it=null;
-  if(res.length===1)it=res[0];
-  else if(res.length>1){var ex=res.filter(function(x){return norm(x.code)===nqb||baseCode(x.code)===nqb});if(ex.length===1)it=ex[0]}
-  if(!it){toast(res.length?("Hay "+res.length+" coincidencias, toca el producto"):"No está en el reporte");return}
-  change(it,function(x){if(!x.parts.length)x.parts=[1];else x.parts[x.parts.length-1]+=1},"+1 "+it.name+" → "+fmt(total(it)+1)+" de "+fmt(it.stock));
-  $("q").value="";ui.q="";$("clr").hidden=true;ui.limit=60;renderList();
-  if(!fromScan)$("q").focus();
+function pickUnique(q){
+  var res=search(q);if(!res||!res.length)return {it:null,n:res?res.length:0};
+  if(res.length===1)return {it:res[0],n:1};
+  var nqb=norm(q).replace(/\s/g,"");
+  var ex=res.filter(function(x){return norm(x.code)===nqb||baseCode(x.code)===nqb});if(ex.length===1)return {it:ex[0],n:res.length};
+  if(/^\d+$/.test(nqb)){var en=res.filter(function(x){return baseCode(x.code).slice(-nqb.length)===nqb});if(en.length===1)return {it:en[0],n:res.length}}
+  return {it:null,n:res.length};
 }
+function addTo(it,qty){
+  qty=qty||1;
+  change(it,function(x){if(!x.parts.length)x.parts=[qty];else x.parts[x.parts.length-1]+=qty},"+"+qty+" "+it.name+" → "+fmt(total(it)+qty)+" de "+fmt(it.stock));
+}
+function quickAdd(fromScan,qty){
+  var r=pickUnique(ui.q);
+  if(!r.it){toast(r.n?("Hay "+r.n+" coincidencias, toca el producto"):"No está en el reporte");beep(false);return false}
+  addTo(r.it,qty);beep(true);
+  $("q").value="";ui.q="";$("clr").hidden=true;ui.limit=60;renderList();
+  if(!fromScan&&!voice.on)$("q").focus();
+  return true;
+}
+
+/* ============ búsqueda por voz ============ */
+var SRec=window.SpeechRecognition||window.webkitSpeechRecognition;
+var voice={rec:null,on:false,restartT:null};
+var NUMW={cero:0,uno:1,una:1,un:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,once:11,doce:12,trece:13,catorce:14,quince:15,veinte:20};
+var ACtx=null;
+function beep(ok){
+  try{ACtx=ACtx||new (window.AudioContext||window.webkitAudioContext)();var o=ACtx.createOscillator(),g=ACtx.createGain();
+    o.frequency.value=ok?880:220;o.type="sine";g.gain.value=0.08;o.connect(g);g.connect(ACtx.destination);o.start();
+    o.stop(ACtx.currentTime+(ok?0.12:0.3));if(navigator.vibrate)navigator.vibrate(ok?40:[60,60,60])}catch(e){}
+}
+function wordsToDigits(t){return t.split(" ").map(function(w){return Object.prototype.hasOwnProperty.call(NUMW,w)?String(NUMW[w]):w}).join(" ")}
+function parseSpoken(raw){
+  var t=norm(raw).replace(/[.,;:¿?¡!]/g," ").replace(/\s+/g," ").trim();
+  t=t.replace(/\b(el codigo|codigo|producto|buscar|busca)\b/g," ").replace(/\bguion\b/g,"-").replace(/\s+/g," ").trim();
+  t=wordsToDigits(t);
+  var qty=1,m=t.match(/^(.*?)\s+(?:por|x|cantidad|son|cuenta)\s+(\d+)$/);
+  if(m){t=m[1].trim();qty=Math.max(1,parseInt(m[2],10))}
+  var compact=t.replace(/\s+/g,"");
+  var q=/^[\d-]+$/.test(compact)?compact.replace(/-/g,""):t;
+  return {q:q,qty:qty,heard:raw};
+}
+function handleSpoken(alts){
+  var first=null;
+  for(var i=0;i<alts.length;i++){
+    var p=parseSpoken(alts[i]);if(!p.q)continue;if(!first)first=p;
+    var r=pickUnique(p.q);
+    if(r.it){$("q").value="";ui.q="";$("clr").hidden=true;addTo(r.it,p.qty);beep(true);ui.limit=60;renderList();setVoiceMsg("Contado: "+r.it.name+(p.qty>1?" (+"+p.qty+")":""));return r.it}
+  }
+  if(!first){setVoiceMsg("No te entendí, repite el código");beep(false);return null}
+  $("q").value=first.q;ui.q=first.q;$("clr").hidden=false;ui.limit=60;ui.open=null;renderList();
+  var n=(search(first.q)||[]).length;
+  setVoiceMsg(n?("Escuché «"+first.heard+"»: "+n+" productos, toca el correcto"):("Escuché «"+first.heard+"»: no está en el reporte"));beep(false);
+  return null;
+}
+function setVoiceMsg(m){var el=$("voiceMsg");if(el)el.textContent=m}
+function voiceStart(){
+  if(!SRec){toast("Este navegador no permite dictar. Usa Chrome.");return}
+  if(voice.on){voiceStop();return}
+  voice.on=true;$("micb").setAttribute("aria-pressed","true");$("voiceBar").hidden=false;setVoiceMsg("Escuchando… di el código o «4509 por 3»");
+  beep(true);listen();
+}
+function listen(){
+  if(!voice.on)return;
+  var rec=new SRec();voice.rec=rec;
+  rec.lang="es-EC";rec.interimResults=true;rec.maxAlternatives=4;rec.continuous=false;
+  rec.onresult=function(e){
+    for(var i=e.resultIndex;i<e.results.length;i++){
+      var r=e.results[i];
+      if(r.isFinal){var alts=[];for(var k=0;k<r.length;k++)alts.push(r[k].transcript);handleSpoken(alts)}
+      else setVoiceMsg("… "+r[0].transcript);
+    }
+  };
+  rec.onerror=function(e){
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){voiceStop();toast("Permite el micrófono para esta página (candado junto a la dirección).")}
+    else if(e.error==="network")setVoiceMsg("Sin internet para reconocer la voz. Reintentando…");
+  };
+  rec.onend=function(){if(voice.on){clearTimeout(voice.restartT);voice.restartT=setTimeout(listen,250)}};
+  try{rec.start()}catch(err){voice.restartT=setTimeout(listen,600)}
+}
+function voiceStop(){
+  voice.on=false;clearTimeout(voice.restartT);
+  try{if(voice.rec){voice.rec.onend=null;voice.rec.abort()}}catch(e){}
+  voice.rec=null;var b=$("micb");if(b)b.setAttribute("aria-pressed","false");var vb=$("voiceBar");if(vb)vb.hidden=true;
+}
+document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden"&&voice.on)voiceStop()});
 
 /* ============ contar en vivo (varios celulares a la vez) ============ */
 var LIVE_URL_DEFAULT="https://script.google.com/macros/s/AKfycbwveFnP_5gMfqUdjzB0X1vqUFR4jyNE6oXwXMge5cZJdjTLpC1zaWgVBv_P6D6xWe9Y_g/exec";
@@ -923,7 +1010,7 @@ document.addEventListener("click",function(e){
     modal('<h3>¿Borrar este conteo?</h3><p>'+esc(x?x.bodega:"")+' · '+esc(x?fdate(x.fecha):"")+'. Se borra de este celular. Si ya descargaste el Excel, ese archivo no se toca.</p><div class="drow"><button class="btn" data-a="mclose">Cancelar</button><button class="btn danger" data-a="dodel" data-id="'+esc(id)+'">Borrar</button></div>');return}
   var a=b.getAttribute("data-a");
   if(b.id==="pick"){$("file").click();return}
-  if(b.id==="back"){persist(true);liveStop();S=null;renderHome();show("home");return}
+  if(b.id==="back"){voiceStop();persist(true);liveStop();S=null;renderHome();show("home");return}
   if(b.id==="liveChip"){liveInfo();return}
   if(b.id==="joinb"){joinDialog();return}
   if(a==="livego"){liveCreateFlow();return}
@@ -938,6 +1025,8 @@ document.addEventListener("click",function(e){
   if(b.id==="clr"){$("q").value="";ui.q="";b.hidden=true;ui.limit=60;renderList();$("q").focus();return}
   if(b.id==="numk"){ui.num=!ui.num;lset("eginv-num",ui.num?"1":"0");applyNum();$("q").focus();return}
   if(b.id==="scanb"){startScan();return}
+  if(b.id==="micb"){voiceStart();return}
+  if(b.id==="voiceStop"){voiceStop();return}
   if(b.id==="dockx"){download();return}
   if(b.closest("#tabs")){ui.tab=b.getAttribute("data-t");ui.open=null;ui.limit=60;setTabs();renderAll();window.scrollTo(0,0);return}
   if(b.closest("#filters")&&b.hasAttribute("data-f")){ui.filter=b.getAttribute("data-f");ui.limit=60;Array.prototype.forEach.call(document.querySelectorAll("#filters [data-f]"),function(x){x.setAttribute("aria-pressed",String(x===b))});renderList();return}
@@ -1004,6 +1093,7 @@ drop.addEventListener("drop",function(e){var f=e.dataTransfer&&e.dataTransfer.fi
 /* ============ arranque ============ */
 applyNum();
 if(canScan())$("scanb").hidden=false;
+if(SRec)$("micb").hidden=false;
 if(typeof ExcelJS==="undefined"){$("pick").disabled=true;toast("No cargó el lector de Excel. Recarga la página.")}
 renderHome();show("home");
 if("serviceWorker" in navigator&&location.protocol==="https:"){navigator.serviceWorker.register("sw.js").catch(function(){})}
