@@ -663,6 +663,13 @@ function parseExpr(s){
 }
 
 /* ============ Excel de salida ============ */
+function meName(){return myName()||"Yo"}
+function counters(it){
+  var a=[];if(it.parts.length)a.push({nm:meName(),q:sum(it.parts)});
+  extList(it).forEach(function(x){if(x.p.length)a.push({nm:x.nm||"Otro",q:sum(x.p)})});
+  return a;
+}
+function whoTxt(it){var a=counters(it);if(!a.length)return null;if(a.length===1)return a[0].nm;return a.map(function(x){return x.nm+" "+fmt(x.q)}).join(" · ")}
 var FILL={eq:"FFDCF2E6",f:"FFFBE4E2",s:"FFFDF0D5",p:"FFEDEFF3",h:"FF0B3D91"};
 function buildXlsx(){
   var wb=new ExcelJS.Workbook();wb.creator="Conteo de inventario Electronic Games";wb.created=new Date();
@@ -672,47 +679,51 @@ function buildXlsx(){
   ws.getCell("A3").value="Fecha de Corte: "+(S.corte||"")+"   ·   Fecha del conteo: "+fdate(S.fecha);
   ws.getCell("A4").value="Bodega: "+(S.bodega||"");
   ws.getCell("H5").value="Saldo Contable";ws.getCell("J5").value="Conteo físico";ws.getCell("H5").font=ws.getCell("J5").font={bold:true,color:{argb:"FF5B6578"}};
-  var hd=["Categoría","Subcategoría","Código","Código Catálogo","Nombre","Serie","Unidad","Stock Mínimo","Stock","Conteo","Diferencia","Estado","Observación","Parciales"];
+  var hd=["Categoría","Subcategoría","Código","Código Catálogo","Nombre","Serie","Unidad","Stock Mínimo","Stock","Conteo","Diferencia","Estado","Contado por","Observación","Parciales"];
   ws.getRow(6).values=hd;
   ws.getRow(6).eachCell(function(c){c.font={bold:true,color:{argb:"FFFFFFFF"}};c.fill={type:"pattern",pattern:"solid",fgColor:{argb:FILL.h}};c.alignment={vertical:"middle",wrapText:true}});
   ws.getRow(6).height=22;
-  var widths=[16,16,20,14,52,10,9,9,8,9,10,12,32,16];widths.forEach(function(w,i){ws.getColumn(i+1).width=w});
+  var widths=[16,16,20,14,52,10,9,9,8,9,10,12,22,32,16];widths.forEach(function(w,i){ws.getColumn(i+1).width=w});
   var r=7;
   S.items.forEach(function(it){
     var c=counted(it),t=c?total(it):null,d=c?t-it.stock:null,st=rowState(it);
     var est=!c?"Sin contar":(d===0?"Coincide":(d<0?"Falta":"Sobra"));
     var row=ws.getRow(r);
     var ap=allParts(it);
-    row.values=[it.cat,it.sub,it.code,it.cc||null,it.name,it.serie||null,it.unit,it.min,it.stock,t,null,est,noteAll(it)||null,ap.length>1?ap.join("+"):null];
+    row.values=[it.cat,it.sub,it.code,it.cc||null,it.name,it.serie||null,it.unit,it.min,it.stock,t,null,est,whoTxt(it),noteAll(it)||null,ap.length>1?ap.join("+"):null];
     row.getCell(11).value={formula:'IF(J'+r+'="","",J'+r+'-I'+r+')',result:d==null?"":d};
     var fill=FILL[st||"p"];
     [10,11,12].forEach(function(ci){row.getCell(ci).fill={type:"pattern",pattern:"solid",fgColor:{argb:fill}}});
     if(st==="f"||st==="s")row.getCell(12).font={bold:true,color:{argb:st==="f"?"FFB3261E":"FF9A5B00"}};
     r++;
   });
-  ws.autoFilter={from:{row:6,column:1},to:{row:Math.max(6,r-1),column:14}};
+  ws.autoFilter={from:{row:6,column:1},to:{row:Math.max(6,r-1),column:15}};
 
   var wd=wb.addWorksheet("Diferencias",{views:[{state:"frozen",ySplit:1}]});
-  wd.columns=[{header:"Código",width:20},{header:"Nombre",width:52},{header:"Categoría",width:16},{header:"Stock sistema",width:13},{header:"Conteo",width:9},{header:"Diferencia",width:11},{header:"Estado",width:10},{header:"Observación",width:32},{header:"Parciales",width:16}];
+  wd.columns=[{header:"Código",width:20},{header:"Nombre",width:52},{header:"Categoría",width:16},{header:"Stock sistema",width:13},{header:"Conteo",width:9},{header:"Diferencia",width:11},{header:"Estado",width:10},{header:"Contado por",width:22},{header:"Observación",width:32},{header:"Parciales",width:16}];
   styleHead(wd);
   var difs=S.items.filter(function(it){return counted(it)&&total(it)!==it.stock}).sort(function(a,b){var da=total(a)-a.stock,db=total(b)-b.stock;return (da<0?0:1)-(db<0?0:1)||Math.abs(db)-Math.abs(da)});
-  difs.forEach(function(it){var d=total(it)-it.stock;var ap=allParts(it);var row=wd.addRow([it.code,it.name,it.cat,it.stock,total(it),d,d<0?"Falta":"Sobra",noteAll(it)||null,ap.length>1?ap.join("+"):null]);
+  difs.forEach(function(it){var d=total(it)-it.stock;var ap=allParts(it);var row=wd.addRow([it.code,it.name,it.cat,it.stock,total(it),d,d<0?"Falta":"Sobra",whoTxt(it),noteAll(it)||null,ap.length>1?ap.join("+"):null]);
     row.getCell(7).fill={type:"pattern",pattern:"solid",fgColor:{argb:d<0?FILL.f:FILL.s}}});
   var notes=S.items.filter(function(it){return noteAll(it)&&!(counted(it)&&total(it)!==it.stock)});
   if(notes.length){wd.addRow([]);var hr=wd.addRow(["Otras observaciones (sin diferencia)"]);hr.font={bold:true};
-    notes.forEach(function(it){wd.addRow([it.code,it.name,it.cat,it.stock,counted(it)?total(it):null,counted(it)?total(it)-it.stock:null,counted(it)?"Coincide":"Sin contar",noteAll(it)])})}
+    notes.forEach(function(it){wd.addRow([it.code,it.name,it.cat,it.stock,counted(it)?total(it):null,counted(it)?total(it)-it.stock:null,counted(it)?"Coincide":"Sin contar",whoTxt(it),noteAll(it)])})}
 
   var wp=wb.addWorksheet("Sin contar",{views:[{state:"frozen",ySplit:1}]});
   wp.columns=[{header:"Código",width:20},{header:"Nombre",width:52},{header:"Categoría",width:16},{header:"Stock sistema",width:13}];styleHead(wp);
   S.items.filter(function(it){return !counted(it)}).forEach(function(it){wp.addRow([it.code,it.name,it.cat,it.stock])});
 
   var wi=wb.addWorksheet("Ingresar",{views:[{state:"frozen",ySplit:1}]});
-  wi.columns=[{header:"Nombre",width:52},{header:"Código",width:20},{header:"Cantidad",width:10},{header:"Observación",width:32}];styleHead(wi);
-  allExtras().forEach(function(x){wi.addRow([x.name,x.code||null,x.qty,x.note||null])});
+  wi.columns=[{header:"Nombre",width:52},{header:"Código",width:20},{header:"Cantidad",width:10},{header:"Agregado por",width:18},{header:"Observación",width:32}];styleHead(wi);
+  allExtras().forEach(function(x){wi.addRow([x.name,x.code||null,x.qty,x.nm||meName(),x.note||null])});
 
   var st=stats(S),wr=wb.addWorksheet("Resumen");
   wr.columns=[{width:34},{width:14}];
   [["Bodega",S.bodega],["Fecha de corte del reporte",S.corte],["Fecha del conteo",fdate(S.fecha)],["Líneas en el reporte",st.lines],["Líneas contadas",st.counted],["Coinciden",st.eq],["Líneas con faltante",st.f],["Unidades que faltan",st.fu],["Líneas con sobrante",st.s],["Unidades que sobran",st.su],["Líneas sin contar",st.pend],["Productos para ingresar",st.extras],["Generado",nowTxt()]].forEach(function(p){var row=wr.addRow(p);row.getCell(1).font={bold:true}});
+  var per={};S.items.forEach(function(it){counters(it).forEach(function(c){var o=per[c.nm]||(per[c.nm]={l:0,u:0});o.l++;o.u+=c.q})});
+  var names=Object.keys(per);
+  if(names.length){wr.addRow([]);var hr2=wr.addRow(["Contado por","Líneas","Unidades"]);hr2.font={bold:true};wr.getColumn(3).width=12;
+    names.sort(function(a,b){return per[b].l-per[a].l}).forEach(function(n){wr.addRow([n,per[n].l,per[n].u])})}
   return wb.xlsx.writeBuffer();
 }
 function styleHead(ws){var r=ws.getRow(1);r.eachCell(function(c){c.font={bold:true,color:{argb:"FFFFFFFF"}};c.fill={type:"pattern",pattern:"solid",fgColor:{argb:FILL.h}}});r.height=20}
