@@ -207,6 +207,12 @@ input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none;display
 .pulse{width:12px;height:12px;border-radius:50%;background:var(--falta);flex:none;animation:pl 1.2s ease-in-out infinite}
 @keyframes pl{0%,100%{transform:scale(.8);opacity:.6}50%{transform:scale(1.15);opacity:1}}
 @media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+
+.row.pick{border:2px solid var(--brand);box-shadow:0 0 0 4px var(--brand-soft)}
+.vhead{display:flex;flex-direction:column;gap:6px;background:var(--surface);border:1px dashed var(--brand);border-radius:12px;padding:9px 12px;font-size:13.5px;color:var(--muted)}
+.vhead b{color:var(--ink)}
+.valts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.valts .chip{font-family:var(--mono)}
 </style>
 </head>
 <body>
@@ -544,13 +550,13 @@ function detailHTML(it){
 }
 function updateRow(code){
   var el=document.querySelector('.row[data-c="'+cssEsc(code)+'"]');
-  if(el){var tmp=document.createElement("div");tmp.innerHTML=rowHTML(byCode[code]);el.replaceWith(tmp.firstChild)}
+  if(el){var pk=el.classList.contains("pick"),tmp=document.createElement("div");tmp.innerHTML=rowHTML(byCode[code]);if(pk)tmp.firstChild.classList.add("pick");el.replaceWith(tmp.firstChild)}
   renderStats();
 }
 function cssEsc(s){return window.CSS&&CSS.escape?CSS.escape(s):String(s).replace(/["\\]/g,"\\$&")}
 
 /* ---------- búsqueda y lista ---------- */
-function hay(it){return it._h||(it._h=norm(it.name+" "+it.code+" "+it.cc+" "+it.cat))}
+function hay(it){return it._h||(it._h=norm(it.name+" "+it.code+" "+it.code.replace(/[^A-Za-z0-9.]/g,"")+" "+it.cc+" "+it.cat+" "+String(it.name).replace(/[\s\-\/]+/g,"")))}
 function search(q){
   var nq=norm(q);if(!nq)return null;
   var toks=nq.split(" "),digits=/^\d+$/.test(nq.replace(/\s/g,""))?nq.replace(/\s/g,""):null;
@@ -570,7 +576,8 @@ function search(q){
 }
 function filtered(){
   var useQ=ui.tab==="contar";
-  var base=(useQ&&search(ui.q))||S.items.slice().sort(function(a,b){return (a.cat||"").localeCompare(b.cat||"","es")||a.name.localeCompare(b.name,"es")});
+  var vl=useQ&&ui.voice&&ui.voice.fuzzy&&ui.voice.q===ui.q?ui.voice.codes.map(function(c){return byCode[c]}).filter(Boolean):null;
+  var base=(useQ&&(vl||search(ui.q)))||S.items.slice().sort(function(a,b){return (a.cat||"").localeCompare(b.cat||"","es")||a.name.localeCompare(b.name,"es")});
   if(useQ&&ui.cat)base=base.filter(function(it){return (it.cat||"Sin categoría")===ui.cat});
   var f=ui.tab==="dif"?"dif":ui.filter;
   if(f==="pend")base=base.filter(function(it){return !counted(it)});
@@ -583,10 +590,14 @@ function filtered(){
 function renderList(){
   var list=filtered(),shown=list.slice(0,ui.limit),h="",last=null,searching=ui.tab==="contar"&&!!norm(ui.q),catCount={};
   if(!searching&&ui.tab==="contar")list.forEach(function(it){var k=it.cat||"Sin categoría";catCount[k]=(catCount[k]||0)+1});
-  shown.forEach(function(it){
+  var vz=searching&&ui.voice?ui.voice:null,lv0=vz&&shown.length?codeLevel(shown[0],ui.q):null;
+  if(vz)h+='<div class="vhead"><span>Escuché <b>«'+esc(vz.heard)+'»</b>'+(shown.length?' · revisa y pon la cantidad':'')+'</span>'+(vz.alts.length?'<span class="valts">¿O quisiste decir? '+vz.alts.map(function(q){return '<button type="button" class="chip" data-a="valt" data-q="'+esc(q)+'">'+esc(q)+'</button>'}).join("")+'</span>':'')+'</div>';
+  shown.forEach(function(it,i){
     var k=it.cat||"Sin categoría";
     if(!searching&&ui.tab==="contar"&&k!==last){last=k;h+='<div class="cat">'+esc(k)+'<span>'+catCount[k]+'</span></div>'}
-    h+=rowHTML(it);
+    var rh=rowHTML(it);
+    if(vz&&(i===0||(lv0<4&&codeLevel(it,ui.q)===lv0&&i<5)))rh=rh.replace('<div class="row ','<div class="row pick ');
+    h+=rh;
   });
   if(!shown.length){
     if(searching)h='<div class="empty"><b>No está en el reporte</b>Si el producto está físicamente en el local, agrégalo para ingresarlo.<div style="margin-top:12px"><button type="button" class="btn pri" data-a="addextra">Agregar «'+esc(ui.q)+'» para ingresar</button></div></div>';
@@ -777,48 +788,111 @@ function quickAdd(fromScan,qty){
 /* ============ búsqueda por voz ============ */
 var SRec=window.SpeechRecognition||window.webkitSpeechRecognition;
 var voice={rec:null,on:false,restartT:null};
-var NUMW={cero:0,uno:1,una:1,un:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,once:11,doce:12,trece:13,catorce:14,quince:15,veinte:20};
+var NUM_U={cero:0,uno:1,una:1,un:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9};
+var NUM_T={diez:10,once:11,doce:12,trece:13,catorce:14,quince:15,dieciseis:16,diecisiete:17,dieciocho:18,diecinueve:19,veinte:20,veintiuno:21,veintiun:21,veintidos:22,veintitres:23,veinticuatro:24,veinticinco:25,veintiseis:26,veintisiete:27,veintiocho:28,veintinueve:29,treinta:30,cuarenta:40,cincuenta:50,sesenta:60,setenta:70,ochenta:80,noventa:90};
+var NUM_H={cien:100,ciento:100,doscientos:200,trescientos:300,cuatrocientos:400,quinientos:500,seiscientos:600,setecientos:700,ochocientos:800,novecientos:900};
+var LETW={a:"a",be:"b",ce:"c",de:"d",e:"e",efe:"f",ge:"g",hache:"h",i:"i",jota:"j",ka:"k",ca:"k",ele:"l",eme:"m",ene:"n",o:"o",pe:"p",cu:"q",erre:"r",ere:"r",ese:"s",te:"t",u:"u",uve:"v",ve:"v",equis:"x",ye:"y",zeta:"z",seta:"z"};
 var ACtx=null;
 function beep(ok){
   try{ACtx=ACtx||new (window.AudioContext||window.webkitAudioContext)();var o=ACtx.createOscillator(),g=ACtx.createGain();
     o.frequency.value=ok?880:220;o.type="sine";g.gain.value=0.08;o.connect(g);g.connect(ACtx.destination);o.start();
     o.stop(ACtx.currentTime+(ok?0.12:0.3));if(navigator.vibrate)navigator.vibrate(ok?40:[60,60,60])}catch(e){}
 }
-function wordsToDigits(t){return t.split(" ").map(function(w){return Object.prototype.hasOwnProperty.call(NUMW,w)?String(NUMW[w]):w}).join(" ")}
-function parseSpoken(raw){
-  var t=norm(raw).replace(/[.,;:¿?¡!]/g," ").replace(/\s+/g," ").trim();
-  t=t.replace(/\b(el codigo|codigo|producto|buscar|busca)\b/g," ").replace(/\bguion\b/g,"-").replace(/\s+/g," ").trim();
-  t=wordsToDigits(t);
-  var qty=1,m=t.match(/^(.*?)\s+(?:por|x|cantidad|son|cuenta)\s+(\d+)$/);
-  if(m){t=m[1].trim();qty=Math.max(1,parseInt(m[2],10))}
-  var compact=t.replace(/\s+/g,"");
-  var q=/^[\d-]+$/.test(compact)?compact.replace(/-/g,""):t;
-  return {q:q,qty:qty,heard:raw};
+/* Convierte lo dictado en un código: «treinta y cinco treinta y dos» → 3532, «te pe cinco» → tp5.
+   Solo convierte si TODO lo dicho son números o letras; si hay palabras (un nombre), lo deja como texto. */
+function spokenToCode(t){
+  var tk=t.split(" ").filter(Boolean),out="",grp=null,mag=9,ok=true;
+  function close(){if(grp!=null){out+=String(grp);grp=null;mag=9}}
+  for(var i=0;i<tk.length;i++){
+    var w=tk[i];
+    if(/^\d+$/.test(w)){close();out+=w;continue}
+    if(w==="y"&&grp!=null)continue;
+    if(w==="punto"){close();out+=".";if(tk[i+1]&&/^[a-z]{2,5}$/.test(tk[i+1])&&!LETW.hasOwnProperty(tk[i+1])&&!NUM_U.hasOwnProperty(tk[i+1])){out+=tk[i+1];i++}continue}
+    if(w==="guion"){close();continue}
+    if(w==="doble"&&tk[i+1]&&NUM_U.hasOwnProperty(tk[i+1])){close();out+=String(NUM_U[tk[i+1]])+String(NUM_U[tk[i+1]]);i++;continue}
+    var v=null,m=0;
+    if(NUM_U.hasOwnProperty(w)){v=NUM_U[w];m=0}else if(NUM_T.hasOwnProperty(w)){v=NUM_T[w];m=1}else if(NUM_H.hasOwnProperty(w)){v=NUM_H[w];m=2}
+    else if(w==="mil"){grp=(grp==null?1:grp)*1000;mag=3;continue}
+    if(v!=null){
+      if(grp!=null&&mag>m&&!(m===0&&v===0)){grp+=v;mag=m}else{close();grp=v;mag=m}
+      if(v===0){close()}
+      continue;
+    }
+    if(LETW.hasOwnProperty(w)){close();out+=LETW[w];continue}
+    if(/^[a-z]$/.test(w)){close();out+=w;continue}
+    if(/^[a-z]+\d+[a-z\d]*$|^\d+[a-z]+[a-z\d]*$/.test(w)){close();out+=w;continue}
+    ok=false;break;
+  }
+  close();
+  out=out.replace(/^\.+|\.+$/g,"");
+  return ok&&out?out:null;
+}
+function voiceCandidates(raw){
+  var t=norm(raw).replace(/[,;:¿?¡!]/g," ").replace(/(\d)\.(\d)/g,"$1$2").replace(/\./g," punto ").replace(/-/g," guion ").replace(/\s+/g," ").trim();
+  t=t.replace(/^(el |la )?(codigo|producto|busca|buscar|numero)( es)?\s+/,"").replace(/\s+(por favor)$/,"").trim();
+  t=t.replace(/\s+(?:por|x|cantidad|son)\s+\d+$/,"").trim();
+  var c=[],code=spokenToCode(t);
+  if(code)c.push(code);
+  var plain=t.replace(/\bpunto\b|\bguion\b/g," ").replace(/\s+/g," ").trim();
+  if(plain&&c.indexOf(plain)<0)c.push(plain);
+  return c;
+}
+function codeLevel(it,q){
+  var nqb=norm(q).replace(/\s/g,""),bc=baseCode(it.code).replace(/[^a-z0-9]/g,""),c=norm(it.code),c2=c.replace(/[^a-z0-9.]/g,""),digits=/^\d+$/.test(nqb);
+  if(c===nqb||c2===nqb||bc===nqb)return 0;
+  if(bc.slice(-nqb.length)===nqb)return 1;
+  if(c.indexOf(nqb)===0)return 2;
+  if(digits&&bc.indexOf(nqb)>=0)return 3;
+  return 4;
+}
+var SYN={azul:"blue",rojo:"red",roja:"red",negro:"black",negra:"black",blanco:"white",blanca:"white",verde:"green",rosado:"pink",rosada:"pink",rosa:"pink",amarillo:"yellow",amarilla:"yellow",morado:"purple",morada:"purple",gris:"gray",celeste:"blue",palanca:"control",mando:"control",audifonos:"audifono",juego:"juego",juegos:"juego"};
+function fuzzySearch(q){
+  var toks=norm(q).split(" ").filter(function(t){return t.length>1&&!/^(de|del|la|el|los|las|para|con|y|un|una)$/.test(t)});
+  if(!toks.length)return [];
+  var need=Math.max(1,Math.ceil(toks.length*0.6)),out=[];
+  S.items.forEach(function(it){var h=hay(it),n=0;toks.forEach(function(t){if(h.indexOf(t)>=0||(SYN[t]&&h.indexOf(SYN[t])>=0)||(t.length>4&&h.indexOf(t.slice(0,-1))>=0))n++});if(n>=need)out.push({it:it,n:n})});
+  out.sort(function(a,b){return b.n-a.n});
+  return out.map(function(x){return x.it});
+}
+function rankQuery(q){
+  var res=search(q);
+  if((!res||!res.length)&&/\s/.test(q)){res=fuzzySearch(q);if(res.length)return {q:q,res:res,level:5,tops:res.length,score:5000+Math.min(res.length,999),fuzzy:true}}
+  if(!res||!res.length)return null;
+  var lv=codeLevel(res[0],q),tops=res.filter(function(x){return codeLevel(x,q)===lv}).length;
+  return {q:q,res:res,level:lv,tops:tops,score:lv*1000+Math.min(tops,999)};
 }
 function handleSpoken(alts){
-  var first=null;
-  for(var i=0;i<alts.length;i++){
-    var p=parseSpoken(alts[i]);if(!p.q)continue;if(!first)first=p;
-    var r=pickUnique(p.q);
-    if(r.it){$("q").value="";ui.q="";$("clr").hidden=true;addTo(r.it,p.qty);beep(true);ui.limit=60;renderList();setVoiceMsg("Contado: "+r.it.name+(p.qty>1?" (+"+p.qty+")":""));return r.it}
+  var seen={},cands=[];
+  alts.forEach(function(a,ai){voiceCandidates(a).forEach(function(q){if(!seen[q]){seen[q]=1;cands.push({q:q,heard:a,ai:ai})}})});
+  if(!cands.length){setVoiceMsg("No te entendí, repite el código");beep(false);return null}
+  var best=null,others=[];
+  cands.forEach(function(c){var r=rankQuery(c.q);if(!r)return;r.heard=c.heard;r.ai=c.ai;
+    if(!best||r.score<best.score||(r.score===best.score&&r.ai<best.ai)){if(best)others.push(best);best=r}else others.push(r)});
+  if(!best){
+    var f=cands[0];$("q").value=f.q;ui.q=f.q;$("clr").hidden=false;ui.voice={heard:f.heard,alts:[]};ui.limit=60;ui.open=null;renderList();scrollToList();
+    setVoiceMsg("Escuché «"+f.heard+"»: no está en el reporte");beep(false);return null;
   }
-  if(!first){setVoiceMsg("No te entendí, repite el código");beep(false);return null}
-  $("q").value=first.q;ui.q=first.q;$("clr").hidden=false;ui.limit=60;ui.open=null;renderList();
-  var n=(search(first.q)||[]).length;
-  setVoiceMsg(n?("Escuché «"+first.heard+"»: "+n+" productos, toca el correcto"):("Escuché «"+first.heard+"»: no está en el reporte"));beep(false);
-  return null;
+  $("q").value=best.q;ui.q=best.q;$("clr").hidden=false;ui.limit=60;ui.open=null;
+  ui.voice={heard:best.heard,q:best.q,fuzzy:!!best.fuzzy,codes:best.fuzzy?best.res.slice(0,60).map(function(x){return x.code}):[],alts:others.filter(function(o){return o.q!==best.q}).slice(0,3).map(function(o){return o.q})};
+  renderList();scrollToList();
+  var top=best.res[0];
+  if(best.fuzzy){setVoiceMsg("Escuché «"+best.heard+"»: "+best.res.length+" parecidos, revisa");beep(false);return top}
+  setVoiceMsg(best.tops===1?("Escuché «"+best.heard+"» → "+top.name):("Escuché «"+best.heard+"»: "+best.tops+" productos posibles"));
+  beep(best.tops===1);
+  return top;
 }
+function scrollToList(){var l=$("searchArea");if(l){var y=l.getBoundingClientRect().top+window.scrollY-8;if(window.scrollY>y)window.scrollTo(0,y)}}
 function setVoiceMsg(m){var el=$("voiceMsg");if(el)el.textContent=m}
 function voiceStart(){
   if(!SRec){toast("Este navegador no permite dictar. Usa Chrome.");return}
   if(voice.on){voiceStop();return}
-  voice.on=true;$("micb").setAttribute("aria-pressed","true");$("voiceBar").hidden=false;setVoiceMsg("Escuchando… di el código o «4509 por 3»");
+  voice.on=true;$("micb").setAttribute("aria-pressed","true");$("voiceBar").hidden=false;setVoiceMsg("Escuchando… di el código o los últimos dígitos");
   beep(true);listen();
 }
 function listen(){
   if(!voice.on)return;
   var rec=new SRec();voice.rec=rec;
-  rec.lang="es-EC";rec.interimResults=true;rec.maxAlternatives=4;rec.continuous=false;
+  rec.lang="es-EC";rec.interimResults=true;rec.maxAlternatives=6;rec.continuous=false;
   rec.onresult=function(e){
     for(var i=e.resultIndex;i<e.results.length;i++){
       var r=e.results[i];
@@ -1022,7 +1096,8 @@ document.addEventListener("click",function(e){
   if(a==="copycode"){var cc=S&&S.live?S.live.sala:"";if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(cc).then(function(){toast("Código copiado")}).catch(function(){});return}
   if(a==="srvset"){srvDialog();return}
   if(a==="srvsave"){var su=$("srvIn").value.trim();if(su&&!/^https:\/\//.test(su)){toast("La dirección debe empezar con https://");return}if(su)lset("eginv-url",su);else ldel("eginv-url");closeModal();toast(su?"Servidor guardado":"Se usará el servidor de la app");return}
-  if(b.id==="clr"){$("q").value="";ui.q="";b.hidden=true;ui.limit=60;renderList();$("q").focus();return}
+  if(a==="valt"){var vq=b.getAttribute("data-q");$("q").value=vq;ui.q=vq;if(ui.voice)ui.voice.alts=ui.voice.alts.filter(function(x){return x!==vq});ui.limit=60;renderList();return}
+  if(b.id==="clr"){ui.voice=null;$("q").value="";ui.q="";b.hidden=true;ui.limit=60;renderList();$("q").focus();return}
   if(b.id==="numk"){ui.num=!ui.num;lset("eginv-num",ui.num?"1":"0");applyNum();$("q").focus();return}
   if(b.id==="scanb"){startScan();return}
   if(b.id==="micb"){voiceStart();return}
@@ -1080,7 +1155,7 @@ document.addEventListener("keydown",function(e){
   if(el.id==="xQty"||el.id==="xName"||el.id==="xCode"){e.preventDefault();var b=document.querySelector('[data-a="xadd"]');if(b)b.click()}
 });
 var qT=null;
-$("q").addEventListener("input",function(){var v=this.value;$("clr").hidden=!v;clearTimeout(qT);qT=setTimeout(function(){ui.q=v;ui.limit=60;ui.open=null;renderList()},120)});
+$("q").addEventListener("input",function(){var v=this.value;$("clr").hidden=!v;clearTimeout(qT);qT=setTimeout(function(){ui.q=v;ui.voice=null;ui.limit=60;ui.open=null;renderList()},120)});
 function applyNum(){$("q").setAttribute("inputmode",ui.num?"numeric":"search");$("numk").setAttribute("aria-pressed",String(ui.num));$("q").placeholder=ui.num?"Últimos dígitos del código":"Nombre o código"}
 $("modal").addEventListener("click",function(e){if(e.target===$("modal"))closeModal()});
 
