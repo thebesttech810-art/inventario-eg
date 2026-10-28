@@ -186,6 +186,18 @@ video.scan{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;object
 @media (prefers-reduced-motion:reduce){.bar i{transition:none}}
 @media (min-width:640px){.sum{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media (max-width:560px){.rmain{grid-template-columns:minmax(0,1fr);gap:8px}.rmain>div:last-child{display:flex;flex-direction:column;align-items:flex-end}.ctl{width:100%;justify-content:flex-end}.qty{flex:1;max-width:96px}}
+
+/* en vivo */
+.livechip{flex:none;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 10px;font-size:12.5px;font-weight:700;font-family:var(--mono);color:var(--ink)}
+.livechip i{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.livechip.good i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.livechip.bad{border-color:var(--falta);color:var(--falta)}
+.livechip.bad i{background:var(--falta)}
+.bigcode{font-family:var(--mono);font-size:32px;font-weight:700;letter-spacing:.06em;text-align:center;padding:12px;border:2px dashed var(--brand);border-radius:14px;color:var(--brand);background:var(--brand-soft);margin:6px 0 10px}
+.linkb{border:0;background:transparent;color:var(--brand);font-weight:600;padding:4px 6px;text-decoration:underline;font-size:13px}
+.joinrow{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}
+.joinrow .btn{flex:1}
+input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none;display:none}
 </style>
 </head>
 <body>
@@ -205,6 +217,7 @@ video.scan{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;object
       <li><b>4</b><span><strong>Descarga</strong> el Excel con conteo, diferencias y productos para ingresar.</span></li>
     </ul>
   </div>
+  <div class="joinrow"><button type="button" class="btn" id="joinb">Unirme a un conteo en vivo</button><button type="button" class="linkb" data-a="srvset">Servidor</button></div>
   <div id="sessWrap" hidden>
     <div class="sec-title">Conteos guardados en este celular</div>
     <div class="sess" id="sess"></div>
@@ -216,6 +229,7 @@ video.scan{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;object
   <div class="head">
     <button type="button" class="back" id="back" aria-label="Volver a los conteos">‹</button>
     <div class="t"><h2 id="hTitle"></h2><p id="hSub"></p></div>
+    <button type="button" class="livechip" id="liveChip" hidden></button>
   </div>
   <div class="prog"><div class="bar"><i id="bar"></i></div><div class="stats" id="stats"></div></div>
   <div class="tabs" id="tabs" role="group" aria-label="Vista">
@@ -333,19 +347,24 @@ var saveT=null;
 
 function loadIndex(){try{return JSON.parse(lget(IDX)||"[]")}catch(e){return []}}
 function saveIndex(a){lset(IDX,JSON.stringify(a))}
-function counted(it){return it.parts.length>0}
-function total(it){return sum(it.parts)}
+function extList(it){var e=it.ext,a=[];if(e)for(var k in e)a.push(e[k]);return a}
+function allParts(it){var p=it.parts.slice();extList(it).forEach(function(x){p=p.concat(x.p)});return p}
+function othersSum(it){var t=0;extList(it).forEach(function(x){t+=sum(x.p)});return t}
+function counted(it){return it.parts.length>0||extList(it).some(function(x){return x.p.length>0})}
+function total(it){return sum(it.parts)+othersSum(it)}
+function noteAll(it){var a=it.note?it.note.split(" · "):[];extList(it).forEach(function(x){if(x.n)x.n.split(" · ").forEach(function(v){if(v&&a.indexOf(v)<0)a.push(v)})});return a.join(" · ")}
+function allExtras(){var a=S.extras.slice();if(S.xext)for(var k in S.xext)a.push(S.xext[k]);return a}
 function stats(s){
   var r={lines:0,counted:0,eq:0,f:0,s:0,fu:0,su:0,notes:0,pend:0};
   s.items.forEach(function(it){
     r.lines++;
-    if(it.note)r.notes++;
+    if(noteAll(it))r.notes++;
     if(!counted(it)){r.pend++;return}
     r.counted++;
     var d=total(it)-it.stock;
     if(d===0)r.eq++;else if(d<0){r.f++;r.fu-=d}else{r.s++;r.su+=d}
   });
-  r.extras=s.extras.length;r.exu=sum(s.extras.map(function(x){return x.qty||0}));
+  var ex=allExtras();r.extras=ex.length;r.exu=sum(ex.map(function(x){return x.qty||0}));
   return r;
 }
 function persist(now){
@@ -355,7 +374,7 @@ function persist(now){
     S.updated=Date.now();
     var ok=lset(SK(S.id),JSON.stringify(S));
     var st=stats(S),idx=loadIndex().filter(function(x){return x.id!==S.id});
-    idx.unshift({id:S.id,bodega:S.bodega,corte:S.corte,fecha:S.fecha,archivo:S.archivo,updated:S.updated,lines:st.lines,counted:st.counted,f:st.f,s:st.s});
+    idx.unshift({id:S.id,bodega:S.bodega,corte:S.corte,fecha:S.fecha,archivo:S.archivo,updated:S.updated,lines:st.lines,counted:st.counted,f:st.f,s:st.s,sala:S.live?S.live.sala:null});
     saveIndex(idx);
     if(!ok)toast("No se pudo guardar en este celular. Descarga el Excel para no perder el conteo.");
   };
@@ -448,7 +467,7 @@ function renderHome(){
   $("sessWrap").hidden=false;
   idx.forEach(function(x){
     var pct=x.lines?Math.round(x.counted/x.lines*100):0;
-    h+='<div class="sesscard"><div><h3>'+esc(x.bodega||"Bodega")+'</h3><p>Conteo del '+esc(fdate(x.fecha))+' · corte '+esc(x.corte||"—")+'</p><p>'+x.counted+' de '+x.lines+' líneas · '+(x.f||0)+' faltan · '+(x.s||0)+' sobran</p><div class="minibar"><i style="width:'+pct+'%"></i></div></div>'+
+    h+='<div class="sesscard"><div><h3>'+esc(x.bodega||"Bodega")+'</h3><p>Conteo del '+esc(fdate(x.fecha))+' · corte '+esc(x.corte||"—")+'</p>'+(x.sala?'<p><span class="tag nt">En vivo · '+esc(x.sala)+'</span></p>':'')+'<p>'+x.counted+' de '+x.lines+' líneas · '+(x.f||0)+' faltan · '+(x.s||0)+' sobran</p><div class="minibar"><i style="width:'+pct+'%"></i></div></div>'+
        '<div class="act"><button class="btn small pri" data-open="'+esc(x.id)+'">Abrir</button><button class="btn small" data-del="'+esc(x.id)+'" aria-label="Borrar conteo">Borrar</button></div></div>';
   });
   $("sess").innerHTML=h;
@@ -458,8 +477,9 @@ function fdate(iso){if(!iso)return"";var p=iso.split("-");return p.length===3?p[
 function openSession(id){
   var raw=lget(SK(id));if(!raw){toast("No encontré ese conteo en este celular.");renderHome();return}
   try{S=JSON.parse(raw)}catch(e){toast("El conteo guardado está dañado.");return}
-  S.extras=S.extras||[];
+  S.extras=S.extras||[];S.extras.forEach(function(x){x.id=x.id||"+X:"+Math.random().toString(36).slice(2,9)});
   byCode={};S.items.forEach(function(it){byCode[it.code]=it;it._h=null});
+  liveStop();if(S.live)liveStart();
   ui.tab="contar";ui.filter="todos";ui.cat="";ui.q="";ui.limit=60;ui.open=null;hist=[];
   $("q").value="";
   fillCats();setTabs();show("count");renderAll();
@@ -486,9 +506,11 @@ function rowHTML(it){
   if(st==="eq")tag='<span class="tag o">Coincide</span>';
   else if(st==="f")tag='<span class="tag f">Faltan '+fmt(-d)+'</span>';
   else if(st==="s")tag='<span class="tag s">Sobran '+fmt(d)+'</span>';
-  var note=it.note?'<span class="tag nt">'+esc(it.note)+'</span>':"";
+  var na=noteAll(it),note=na?'<span class="tag nt">'+esc(na)+'</span>':"";
   var val=counted(it)?fmt(total(it)):"";
-  var parts=it.parts.length>1?'<div class="parts">'+it.parts.map(fmt).join(" + ")+'</div>':"";
+  var oth=extList(it).filter(function(x){return x.p.length});
+  var ptxt=oth.length?["tú "+fmt(sum(it.parts))].concat(oth.map(function(x){return (x.nm||"otro")+" "+fmt(sum(x.p))})).join(" · "):(it.parts.length>1?it.parts.map(fmt).join(" + "):"");
+  var parts=ptxt?'<div class="parts">'+esc(ptxt)+'</div>':"";
   var h='<div class="row '+st+'" data-c="'+esc(it.code)+'"><div class="rmain">'+
     '<button type="button" class="info" data-a="open" aria-expanded="'+(ui.open===it.code)+'"><div class="nm">'+esc(it.name)+'</div><div class="meta"><span class="code">'+esc(it.code)+'</span><span class="sys">Sistema <b>'+fmt(it.stock)+'</b></span>'+tag+note+'</div></button>'+
     '<div><div class="ctl"><button type="button" class="k eqb" data-a="eq" aria-label="Coincide con el sistema">=</button><button type="button" class="k" data-a="minus" aria-label="Restar uno">−</button>'+
@@ -502,7 +524,8 @@ function detailHTML(it){
   var pc=it.parts.length?it.parts.map(function(p,i){return '<span class="pchip">'+fmt(p)+'<button type="button" data-a="delpart" data-i="'+i+'" aria-label="Quitar este parcial">×</button></span>'}).join(""):'<span class="hint">Sin contar todavía.</span>';
   var chips=NOTES.map(function(n){var on=it.note.split(" · ").indexOf(n)>=0;return '<button type="button" class="chip" data-a="note" data-n="'+esc(n)+'" aria-pressed="'+on+'">'+esc(n)+'</button>'}).join("");
   return '<div class="detail">'+
-    '<div><label>Conteo por lugar (vitrina, bodega, cajón…)</label><div class="partline">'+pc+'<button type="button" class="btn small" data-a="addpart">+ Otro lugar</button></div><p class="hint">Cada lugar se suma. También puedes escribir en la casilla 29+43+8.</p></div>'+
+    (extList(it).some(function(x){return x.p.length||x.n})?'<div><label>Contado por otros</label><div class="partline">'+extList(it).filter(function(x){return x.p.length||x.n}).map(function(x){return '<span class="pchip" style="padding-right:9px">'+esc(x.nm||"otro")+': '+fmt(sum(x.p))+(x.n?' · '+esc(x.n):"")+'</span>'}).join("")+'</div></div>':"")+
+    '<div><label>Lo que cuentas tú, por lugar (vitrina, bodega, cajón…)</label><div class="partline">'+pc+'<button type="button" class="btn small" data-a="addpart">+ Otro lugar</button></div><p class="hint">Cada lugar se suma. También puedes escribir en la casilla 29+43+8.</p></div>'+
     '<div><label>Observación</label><div class="notes">'+chips+'</div></div>'+
     '<div><input class="txt" data-a="notetxt" placeholder="Escribe una observación" value="'+esc(it.note)+'" aria-label="Observación"></div>'+
     '<div class="drow"><button type="button" class="btn small" data-a="zero">Contado: 0 (no está)</button><button type="button" class="btn small" data-a="clear">Borrar conteo</button><button type="button" class="btn small" data-a="close">Cerrar</button></div>'+
@@ -542,7 +565,7 @@ function filtered(){
   if(f==="pend")base=base.filter(function(it){return !counted(it)});
   else if(f==="cont")base=base.filter(counted);
   else if(f==="dif")base=base.filter(function(it){return counted(it)&&total(it)!==it.stock});
-  else if(f==="nota")base=base.filter(function(it){return !!it.note});
+  else if(f==="nota")base=base.filter(function(it){return !!noteAll(it)});
   if(ui.tab==="dif")base.sort(function(a,b){var da=total(a)-a.stock,db=total(b)-b.stock;return (da<0?0:1)-(db<0?0:1)||Math.abs(db)-Math.abs(da)});
   return base;
 }
@@ -578,8 +601,11 @@ function renderSummary(){
   h+='<div class="card"><h3>Excel del inventario</h3><p>Mismo formato del reporte de Contífico, con el conteo, la diferencia, el estado y tus observaciones. Incluye hojas de Diferencias, Sin contar e Ingresar.</p><div class="drow"><button type="button" class="btn pri" data-a="xlsx">Descargar Excel</button>'+(canShare()?'<button type="button" class="btn" data-a="share">Enviar por WhatsApp o correo</button>':"")+'<button type="button" class="btn" data-a="copy">Copiar resumen</button></div></div>';
   h+='<div class="card"><h3>Productos que no están en el reporte</h3><p>Lo que encuentras en el local pero el sistema no tiene en esta bodega. Sale en la hoja «Ingresar».</p>'+
     '<div class="form"><input class="txt" id="xName" placeholder="Nombre del producto" aria-label="Nombre del producto"><div class="two"><input class="txt" id="xCode" placeholder="Código (si lo tiene)" aria-label="Código"><input class="txt" id="xQty" inputmode="numeric" placeholder="Cant." aria-label="Cantidad"></div><button type="button" class="btn" data-a="xadd">Agregar</button></div>';
-  if(S.extras.length){h+='<div class="xlist">';S.extras.forEach(function(x,i){h+='<div class="xitem"><span>'+esc(x.name)+(x.code?' <span class="code">'+esc(x.code)+'</span>':"")+(x.note?' · '+esc(x.note):"")+'</span><b>'+fmt(x.qty)+'</b><button type="button" data-a="xdel" data-i="'+i+'">Quitar</button></div>'});h+='</div>'}
+  var xo=S.xext?Object.keys(S.xext).map(function(k){return S.xext[k]}):[];
+  if(S.extras.length||xo.length){h+='<div class="xlist">';S.extras.forEach(function(x,i){h+='<div class="xitem"><span>'+esc(x.name)+(x.code?' <span class="code">'+esc(x.code)+'</span>':"")+(x.note?' · '+esc(x.note):"")+'</span><b>'+fmt(x.qty)+'</b><button type="button" data-a="xdel" data-i="'+i+'">Quitar</button></div>'});
+    xo.forEach(function(x){h+='<div class="xitem"><span>'+esc(x.name)+(x.code?' <span class="code">'+esc(x.code)+'</span>':"")+' · <span class="hint">agregó '+esc(x.nm||"otro")+'</span></span><b>'+fmt(x.qty)+'</b><span></span></div>'});h+='</div>'}
   h+='</div>';
+  h+=liveCardHTML();
   h+='<div class="card"><h3>Unir el conteo de otro celular</h3><p>Si tu acompañante contó otra parte en su celular, que descargue su Excel y lo cargas aquí: se suman sus cantidades como otro lugar.</p><div class="drow"><button type="button" class="btn" data-a="merge">Cargar su Excel</button></div></div>';
   h+='<div class="card"><h3>Cerrar el conteo</h3><p>Al terminar, lo que no encontraste se puede marcar como 0. Hoy hay <b>'+st.pend+'</b> líneas sin contar.</p><div class="drow"><button type="button" class="btn danger" data-a="zeroall"'+(st.pend?"":" disabled")+'>Marcar pendientes como 0</button></div></div>';
   h+='<div class="card"><h3>Datos del conteo</h3><p>Bodega: '+esc(S.bodega)+'<br>Fecha de corte del reporte: '+esc(S.corte||"—")+'<br>Archivo: '+esc(S.archivo||"—")+'</p><label class="hint" for="fechaC">Fecha del conteo</label><input type="date" id="fechaC" class="txt" value="'+esc(S.fecha)+'"></div>';
@@ -589,6 +615,7 @@ function renderAll(){
   $("hTitle").textContent=S.bodega||"Conteo";
   $("hSub").textContent="Conteo del "+fdate(S.fecha)+" · stock al "+(S.corte||"—");
   $("searchArea").hidden=ui.tab!=="contar";
+  renderLiveChip();
   if(ui.tab==="resumen")renderSummary();else renderList();
   renderStats();
 }
@@ -597,12 +624,12 @@ function setTabs(){Array.prototype.forEach.call(document.querySelectorAll("#tabs
 /* ---------- cambios con deshacer ---------- */
 function change(it,fn,msg){
   hist.push({code:it.code,parts:it.parts.slice(),note:it.note});if(hist.length>50)hist.shift();
-  fn(it);persist();updateRow(it.code);
+  fn(it);markDirty(it.code);persist();updateRow(it.code);
   if(msg)toast(msg,true);
 }
 function undo(){
   var h=hist.pop();if(!h||!S)return;var it=byCode[h.code];if(!it)return;
-  it.parts=h.parts;it.note=h.note;persist();
+  it.parts=h.parts;it.note=h.note;markDirty(it.code);persist();
   if(document.querySelector('.row[data-c="'+cssEsc(it.code)+'"]'))updateRow(it.code);else renderAll();
   toast("Deshecho: "+it.name);
 }
@@ -633,7 +660,8 @@ function buildXlsx(){
     var c=counted(it),t=c?total(it):null,d=c?t-it.stock:null,st=rowState(it);
     var est=!c?"Sin contar":(d===0?"Coincide":(d<0?"Falta":"Sobra"));
     var row=ws.getRow(r);
-    row.values=[it.cat,it.sub,it.code,it.cc||null,it.name,it.serie||null,it.unit,it.min,it.stock,t,null,est,it.note||null,it.parts.length>1?it.parts.join("+"):null];
+    var ap=allParts(it);
+    row.values=[it.cat,it.sub,it.code,it.cc||null,it.name,it.serie||null,it.unit,it.min,it.stock,t,null,est,noteAll(it)||null,ap.length>1?ap.join("+"):null];
     row.getCell(11).value={formula:'IF(J'+r+'="","",J'+r+'-I'+r+')',result:d==null?"":d};
     var fill=FILL[st||"p"];
     [10,11,12].forEach(function(ci){row.getCell(ci).fill={type:"pattern",pattern:"solid",fgColor:{argb:fill}}});
@@ -646,11 +674,11 @@ function buildXlsx(){
   wd.columns=[{header:"Código",width:20},{header:"Nombre",width:52},{header:"Categoría",width:16},{header:"Stock sistema",width:13},{header:"Conteo",width:9},{header:"Diferencia",width:11},{header:"Estado",width:10},{header:"Observación",width:32},{header:"Parciales",width:16}];
   styleHead(wd);
   var difs=S.items.filter(function(it){return counted(it)&&total(it)!==it.stock}).sort(function(a,b){var da=total(a)-a.stock,db=total(b)-b.stock;return (da<0?0:1)-(db<0?0:1)||Math.abs(db)-Math.abs(da)});
-  difs.forEach(function(it){var d=total(it)-it.stock;var row=wd.addRow([it.code,it.name,it.cat,it.stock,total(it),d,d<0?"Falta":"Sobra",it.note||null,it.parts.length>1?it.parts.join("+"):null]);
+  difs.forEach(function(it){var d=total(it)-it.stock;var ap=allParts(it);var row=wd.addRow([it.code,it.name,it.cat,it.stock,total(it),d,d<0?"Falta":"Sobra",noteAll(it)||null,ap.length>1?ap.join("+"):null]);
     row.getCell(7).fill={type:"pattern",pattern:"solid",fgColor:{argb:d<0?FILL.f:FILL.s}}});
-  var notes=S.items.filter(function(it){return it.note&&!(counted(it)&&total(it)!==it.stock)});
+  var notes=S.items.filter(function(it){return noteAll(it)&&!(counted(it)&&total(it)!==it.stock)});
   if(notes.length){wd.addRow([]);var hr=wd.addRow(["Otras observaciones (sin diferencia)"]);hr.font={bold:true};
-    notes.forEach(function(it){wd.addRow([it.code,it.name,it.cat,it.stock,counted(it)?total(it):null,counted(it)?total(it)-it.stock:null,counted(it)?"Coincide":"Sin contar",it.note])})}
+    notes.forEach(function(it){wd.addRow([it.code,it.name,it.cat,it.stock,counted(it)?total(it):null,counted(it)?total(it)-it.stock:null,counted(it)?"Coincide":"Sin contar",noteAll(it)])})}
 
   var wp=wb.addWorksheet("Sin contar",{views:[{state:"frozen",ySplit:1}]});
   wp.columns=[{header:"Código",width:20},{header:"Nombre",width:52},{header:"Categoría",width:16},{header:"Stock sistema",width:13}];styleHead(wp);
@@ -658,7 +686,7 @@ function buildXlsx(){
 
   var wi=wb.addWorksheet("Ingresar",{views:[{state:"frozen",ySplit:1}]});
   wi.columns=[{header:"Nombre",width:52},{header:"Código",width:20},{header:"Cantidad",width:10},{header:"Observación",width:32}];styleHead(wi);
-  S.extras.forEach(function(x){wi.addRow([x.name,x.code||null,x.qty,x.note||null])});
+  allExtras().forEach(function(x){wi.addRow([x.name,x.code||null,x.qty,x.note||null])});
 
   var st=stats(S),wr=wb.addWorksheet("Resumen");
   wr.columns=[{width:34},{width:14}];
@@ -686,8 +714,8 @@ function summaryText(){
   var st=stats(S),t="Inventario "+S.bodega+" · "+fdate(S.fecha)+"\nContados "+st.counted+" de "+st.lines+" · coinciden "+st.eq+"\nFaltan "+fmt(st.fu)+" u en "+st.f+" líneas · Sobran "+fmt(st.su)+" u en "+st.s+" líneas";
   if(st.pend)t+="\nSin contar: "+st.pend+" líneas";
   var difs=S.items.filter(function(it){return counted(it)&&total(it)!==it.stock});
-  if(difs.length){t+="\n";difs.forEach(function(it){var d=total(it)-it.stock;t+="\n"+(d<0?"FALTA ":"SOBRA ")+fmt(Math.abs(d))+" · "+it.code+" · "+it.name+(it.note?" ("+it.note+")":"")})}
-  if(S.extras.length){t+="\n\nPara ingresar:";S.extras.forEach(function(x){t+="\n"+fmt(x.qty)+" · "+x.name+(x.code?" ("+x.code+")":"")})}
+  if(difs.length){t+="\n";difs.forEach(function(it){var d=total(it)-it.stock;t+="\n"+(d<0?"FALTA ":"SOBRA ")+fmt(Math.abs(d))+" · "+it.code+" · "+it.name+(noteAll(it)?" ("+noteAll(it)+")":"")})}
+  if(allExtras().length){t+="\n\nPara ingresar:";allExtras().forEach(function(x){t+="\n"+fmt(x.qty)+" · "+x.name+(x.code?" ("+x.code+")":"")})}
   return t;
 }
 
@@ -725,6 +753,142 @@ function quickAdd(fromScan){
   if(!fromScan)$("q").focus();
 }
 
+/* ============ contar en vivo (varios celulares a la vez) ============ */
+var LIVE_URL_DEFAULT="https://script.google.com/macros/s/AKfycbwveFnP_5gMfqUdjzB0X1vqUFR4jyNE6oXwXMge5cZJdjTLpC1zaWgVBv_P6D6xWe9Y_g/exec";
+function liveUrl(){var u=lget("eginv-url");return u||(LIVE_URL_DEFAULT.indexOf("__")===0?"":LIVE_URL_DEFAULT)}
+function myDev(){var d=lget("eginv-dev");if(!d){d=Math.random().toString(36).slice(2,8);lset("eginv-dev",d)}return d}
+function myName(){return lget("eginv-name")||""}
+function api(body){
+  var u=liveUrl();if(!u)return Promise.reject(new Error("Falta la dirección del servidor en vivo."));
+  return fetch(u,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body),redirect:"follow",cache:"no-store"})
+    .then(function(r){if(!r.ok)throw new Error("El servidor respondió "+r.status);return r.json()})
+    .then(function(j){if(!j||!j.ok)throw new Error((j&&j.error)||"Error del servidor");return j});
+}
+var live={timer:null,kickT:null,busy:false,ok:null,err:"",people:{},lastOk:0};
+var pendingNext=null;
+function markDirty(code){if(!S||!S.live)return;var d=S.live.dirty||(S.live.dirty={});d[code]=(d[code]||0)+1;kick()}
+function kick(){clearTimeout(live.kickT);live.kickT=setTimeout(tick,700)}
+function liveStart(){liveStop();live.people={};live.ok=null;live.timer=setInterval(tick,4000);tick()}
+function liveStop(){clearInterval(live.timer);clearTimeout(live.kickT);live.timer=null}
+function compactItems(){return S.items.map(function(it){return [it.cat,it.sub,it.code,it.cc,it.name,it.serie,it.unit,it.min,it.stock]})}
+function salaCode(){var b=norm(S.bodega).replace(/^bodega\s+/,"").replace(/^(plaza del|plaza de|plaza|el|la|los|las)\s+/,"").replace(/[^a-z]/g,"").slice(0,3).toUpperCase()||"INV";return b+"-"+String(Math.floor(1000+Math.random()*9000))}
+function tick(){
+  if(!S||!S.live||live.busy||document.visibilityState==="hidden")return;
+  live.busy=true;
+  var sala=S.live.sala,sid=S.id;
+  push().then(function(){return pull()}).then(function(){live.ok=true;live.err="";live.lastOk=Date.now()})
+  .catch(function(e){live.ok=false;live.err=e.message||"Sin conexión"})
+  .then(function(){live.busy=false;if(S&&S.id===sid)renderLiveChip()});
+}
+function push(){
+  var d=S.live.dirty||{},codes=Object.keys(d);if(!codes.length)return Promise.resolve();
+  codes=codes.slice(0,1500);
+  var sent={},items=codes.map(function(c){
+    sent[c]=d[c];
+    if(c.indexOf("+X:")===0){var x=S.extras.filter(function(e){return e.id===c})[0];
+      return x?{c:c,p:String(x.qty),n:JSON.stringify({name:x.name,code:x.code||"",note:x.note||""})}:{c:c,p:"",n:""}}
+    var it=byCode[c];return it?{c:c,p:it.parts.join("+"),n:it.note||""}:{c:c,p:"",n:""};
+  });
+  return api({a:"subir",sala:S.live.sala,dev:S.live.dev,nombre:myName(),items:items}).then(function(){
+    var dd=S.live.dirty||{};Object.keys(sent).forEach(function(c){if(dd[c]===sent[c])delete dd[c]});persist();
+  });
+}
+function pull(){
+  var sid=S.id;
+  return api({a:"bajar",sala:S.live.sala,desde:S.live.since||0}).then(function(j){
+    if(!S||S.id!==sid)return;
+    var rows=j.filas||[],changed={},xchg=false;
+    rows.forEach(function(r){
+      var c=r[0],dev=r[1],nm=r[2],p=r[3],n=r[4],t=Number(r[5])||0;
+      if(t>(S.live.since||0))S.live.since=t;
+      if(dev===S.live.dev)return;
+      live.people[dev]={nm:nm||"Otro",t:t};
+      if(c.indexOf("+X:")===0){S.xext=S.xext||{};var k=dev+c;
+        if(!p){delete S.xext[k]}else{var o={};try{o=JSON.parse(n)}catch(e){}S.xext[k]={name:o.name||"(sin nombre)",code:o.code||"",note:o.note||"",qty:num(p)||0,nm:nm}}
+        xchg=true;return}
+      var it=byCode[c];if(!it)return;
+      it.ext=it.ext||{};
+      var parts=p?(parseExpr(p)||[]):[];
+      if(!parts.length&&!n)delete it.ext[dev];else it.ext[dev]={p:parts,n:n||"",nm:nm||"Otro"};
+      changed[c]=1;
+    });
+    if(rows.length)S.live.peopleSeen=Object.assign(S.live.peopleSeen||{},Object.keys(live.people).reduce(function(o,k){o[k]=live.people[k].nm;return o},{}));
+    if(!rows.length)return;
+    persist();
+    var focus=document.activeElement,fr=focus&&focus.closest?focus.closest(".row"):null,fcode=fr?fr.getAttribute("data-c"):null;
+    if(ui.tab==="resumen"){if(!(focus&&/INPUT|TEXTAREA/.test(focus.tagName)))renderAll();else renderStats();return}
+    Object.keys(changed).forEach(function(c){if(c!==fcode&&document.querySelector('.row[data-c="'+cssEsc(c)+'"]'))updateRow(c)});
+    renderStats();
+  });
+}
+function peopleCount(){var seen=S&&S.live&&S.live.peopleSeen?Object.keys(S.live.peopleSeen).length:0;return 1+seen}
+function renderLiveChip(){
+  var ch=$("liveChip");if(!ch)return;
+  if(!S||!S.live){ch.hidden=true;return}
+  ch.hidden=false;
+  ch.className="livechip "+(live.ok===false?"bad":(live.ok?"good":""));
+  ch.innerHTML='<i></i>'+esc(S.live.sala)+' · '+peopleCount();
+  ch.setAttribute("aria-label","En vivo, sala "+S.live.sala+", "+peopleCount()+" personas"+(live.ok===false?", sin conexión":""));
+}
+function liveCardHTML(){
+  if(!S.live)return '<div class="card"><h3>Contar en vivo con otra persona</h3><p>Cada uno cuenta en su celular y ven al momento lo que cuenta el otro. Se suma todo en un solo conteo.</p><div class="drow"><button type="button" class="btn pri" data-a="livego">Activar en vivo</button></div>'+(liveUrl()?"":'<p class="hint" style="margin-top:8px">Primero hay que configurar el servidor. <button type="button" class="linkb" data-a="srvset">Configurar</button></p>')+'</div>';
+  var ppl=[myName()+" (tú)"].concat(Object.keys(S.live.peopleSeen||{}).map(function(k){return S.live.peopleSeen[k]}));
+  return '<div class="card"><h3>En vivo · sala <span class="code" style="font-size:15px">'+esc(S.live.sala)+'</span></h3><p>Tu acompañante abre la app, toca «Unirme a un conteo en vivo» y escribe este código.</p>'+
+    '<div class="bigcode">'+esc(S.live.sala)+'</div><p class="hint">Contando: '+esc(ppl.join(", "))+(live.ok===false?' · <b style="color:var(--falta)">sin conexión, se reintenta solo</b>':"")+'</p>'+
+    '<div class="drow"><button type="button" class="btn" data-a="copycode">Copiar código</button><button type="button" class="btn danger" data-a="liveoff">Salir del modo en vivo</button></div></div>';
+}
+function liveInfo(){
+  if(!S||!S.live)return;
+  var ppl=[myName()+" (tú)"].concat(Object.keys(S.live.peopleSeen||{}).map(function(k){return S.live.peopleSeen[k]}));
+  var st=live.ok===false?'<p style="color:var(--falta)">Sin conexión: '+esc(live.err)+'. Lo que cuentes se guarda y se envía cuando vuelva la señal.</p>':(live.ok?'<p>Conectado. Se actualiza cada pocos segundos.</p>':'<p>Conectando…</p>');
+  modal('<h3>Conteo en vivo</h3><p>Código de la sala:</p><div class="bigcode">'+esc(S.live.sala)+'</div>'+st+'<p class="hint">Contando: '+esc(ppl.join(", "))+'</p><div class="drow"><button class="btn" data-a="copycode">Copiar código</button><button class="btn pri" data-a="mclose">Listo</button></div>');
+}
+function askName(next){
+  pendingNext=next;
+  modal('<h3>¿Quién cuenta en este celular?</h3><p>Tu nombre aparece junto a lo que cuentes, para que el otro sepa quién contó qué.</p><input class="txt" id="nmIn" placeholder="Ej. Edu" value="'+esc(myName())+'" autocomplete="off"><div class="drow" style="margin-top:12px"><button class="btn" data-a="mclose">Cancelar</button><button class="btn pri" data-a="namego">Continuar</button></div>');
+  setTimeout(function(){var i=$("nmIn");if(i)i.focus()},50);
+}
+function liveCreateFlow(){
+  if(!liveUrl()){srvDialog();return}
+  if(!myName()){askName(liveCreateFlow);return}
+  var tries=0;
+  modal('<h3>Activando en vivo…</h3><p>Subiendo la lista de productos para que tu acompañante la reciba.</p>');
+  (function go(){
+    var sala=salaCode();
+    api({a:"crear",sala:sala,meta:{empresa:S.empresa,titulo:S.titulo,bodega:S.bodega,corte:S.corte,fecha:S.fecha},items:compactItems()}).then(function(){
+      S.live={sala:sala,dev:myDev(),since:0,dirty:{},peopleSeen:{}};
+      S.items.forEach(function(it){if(it.parts.length||it.note)S.live.dirty[it.code]=1});
+      S.extras.forEach(function(x){S.live.dirty[x.id]=1});
+      persist(true);liveStart();renderAll();liveInfo();
+    }).catch(function(e){
+      if(/ya existe/.test(e.message)&&tries++<3)return go();
+      closeModal();toast("No se pudo activar: "+e.message);
+    });
+  })();
+}
+function joinDialog(){
+  if(!liveUrl()){srvDialog();return}
+  modal('<h3>Unirme a un conteo en vivo</h3><p>Pide el código a la persona que activó el conteo en su celular.</p><div class="form"><input class="txt" id="jnIn" placeholder="Tu nombre" value="'+esc(myName())+'" autocomplete="off"><input class="txt" id="jcIn" placeholder="Código, ej. CON-4821" autocapitalize="characters" autocomplete="off" style="font-family:var(--mono);text-transform:uppercase"></div><div class="drow" style="margin-top:12px"><button class="btn" data-a="mclose">Cancelar</button><button class="btn pri" data-a="joingo">Unirme</button></div>');
+  setTimeout(function(){var i=myName()?$("jcIn"):$("jnIn");if(i)i.focus()},50);
+}
+function liveJoin(code,btn){
+  var ex=loadIndex().filter(function(x){return x.sala===code})[0];
+  if(ex){closeModal();openSession(ex.id);toast("Ya estabas en esta sala");return}
+  if(btn){btn.disabled=true;btn.textContent="Uniendo…"}
+  api({a:"unir",sala:code}).then(function(j){
+    var m=j.meta||{},id=Date.now().toString(36);
+    var items=(j.items||[]).map(function(a){return {cat:a[0]||"",sub:a[1]||"",code:String(a[2]),cc:a[3]||"",name:a[4]||"",serie:a[5]||"",unit:a[6]||"",min:Number(a[7])||0,stock:Number(a[8])||0,parts:[],note:"",ext:{}}});
+    S={id:id,empresa:m.empresa||"",titulo:m.titulo||"",bodega:m.bodega||code,corte:m.corte||"",fecha:m.fecha||todayISO(),archivo:"Sala en vivo "+code,creado:Date.now(),updated:Date.now(),items:items,extras:[],
+       live:{sala:code,dev:myDev(),since:0,dirty:{},peopleSeen:{}}};
+    persist(true);closeModal();openSession(id);toast("Unido a "+code+" · "+items.length+" productos");
+  }).catch(function(e){if(btn){btn.disabled=false;btn.textContent="Unirme"}toast(/no existe/i.test(e.message)?"No encontré esa sala. Revisa el código.":"No se pudo unir: "+e.message)});
+}
+function srvDialog(){
+  modal('<h3>Servidor en vivo</h3><p>Dirección de la aplicación web de Google Apps Script (termina en /exec).</p><input class="txt" id="srvIn" placeholder="https://script.google.com/macros/s/…/exec" value="'+esc(lget("eginv-url")||"")+'" autocomplete="off"><p class="hint" style="margin-top:6px">'+(LIVE_URL_DEFAULT.indexOf("__")===0?"La app todavía no tiene servidor configurado.":"Déjalo vacío para usar el servidor de la app.")+'</p><div class="drow" style="margin-top:12px"><button class="btn" data-a="mclose">Cancelar</button><button class="btn pri" data-a="srvsave">Guardar</button></div>');
+}
+document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"&&S&&S.live)kick()});
+window.addEventListener("online",function(){if(S&&S.live)kick()});
+
 /* ============ eventos ============ */
 function handleFile(file,merge){
   if(!file)return;
@@ -744,10 +908,10 @@ function doMerge(p,name){
     if(!o.parts.length&&!o.note)return;
     var it=byCode[o.code];
     if(!it){if(o.parts.length){S.extras.push({name:o.name,code:o.code,qty:sum(o.parts),note:"de "+name});miss++}return}
-    if(o.parts.length){it.parts=it.parts.concat(o.parts);add++}
-    if(o.note&&it.note.indexOf(o.note)<0)it.note=it.note?it.note+" · "+o.note:o.note;
+    if(o.parts.length){it.parts=it.parts.concat(o.parts);add++;markDirty(it.code)}
+    if(o.note&&it.note.indexOf(o.note)<0){it.note=it.note?it.note+" · "+o.note:o.note;markDirty(it.code)}
   });
-  p.extras.forEach(function(x){S.extras.push(x)});
+  p.extras.forEach(function(x){x.id=x.id||"+X:"+Math.random().toString(36).slice(2,9);S.extras.push(x);markDirty(x.id)});
   hist=[];persist(true);renderAll();
   toast("Unido: "+add+" productos sumados"+(miss?", "+miss+" a Ingresar":""));
 }
@@ -759,7 +923,18 @@ document.addEventListener("click",function(e){
     modal('<h3>¿Borrar este conteo?</h3><p>'+esc(x?x.bodega:"")+' · '+esc(x?fdate(x.fecha):"")+'. Se borra de este celular. Si ya descargaste el Excel, ese archivo no se toca.</p><div class="drow"><button class="btn" data-a="mclose">Cancelar</button><button class="btn danger" data-a="dodel" data-id="'+esc(id)+'">Borrar</button></div>');return}
   var a=b.getAttribute("data-a");
   if(b.id==="pick"){$("file").click();return}
-  if(b.id==="back"){persist(true);S=null;renderHome();show("home");return}
+  if(b.id==="back"){persist(true);liveStop();S=null;renderHome();show("home");return}
+  if(b.id==="liveChip"){liveInfo();return}
+  if(b.id==="joinb"){joinDialog();return}
+  if(a==="livego"){liveCreateFlow();return}
+  if(a==="liveinfo"){liveInfo();return}
+  if(a==="liveoff"){modal('<h3>¿Salir del modo en vivo?</h3><p>Lo que ya contaron todos se queda en este celular. Dejarás de ver lo nuevo que cuenten los demás.</p><div class="drow"><button class="btn" data-a="mclose">Cancelar</button><button class="btn danger" data-a="liveoffok">Salir</button></div>');return}
+  if(a==="liveoffok"){liveStop();S.live=null;persist(true);closeModal();renderAll();toast("Modo en vivo desactivado");return}
+  if(a==="namego"){var nm=$("nmIn").value.trim();if(!nm){toast("Escribe tu nombre.");return}lset("eginv-name",nm);closeModal();var nx=pendingNext;pendingNext=null;if(nx)nx();return}
+  if(a==="joingo"){var code=$("jcIn").value.trim().toUpperCase(),nm2=$("jnIn").value.trim();if(!nm2||!code){toast("Escribe tu nombre y el código.");return}lset("eginv-name",nm2);liveJoin(code,b);return}
+  if(a==="copycode"){var cc=S&&S.live?S.live.sala:"";if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(cc).then(function(){toast("Código copiado")}).catch(function(){});return}
+  if(a==="srvset"){srvDialog();return}
+  if(a==="srvsave"){var su=$("srvIn").value.trim();if(su&&!/^https:\/\//.test(su)){toast("La dirección debe empezar con https://");return}if(su)lset("eginv-url",su);else ldel("eginv-url");closeModal();toast(su?"Servidor guardado":"Se usará el servidor de la app");return}
   if(b.id==="clr"){$("q").value="";ui.q="";b.hidden=true;ui.limit=60;renderList();$("q").focus();return}
   if(b.id==="numk"){ui.num=!ui.num;lset("eginv-num",ui.num?"1":"0");applyNum();$("q").focus();return}
   if(b.id==="scanb"){startScan();return}
@@ -776,17 +951,17 @@ document.addEventListener("click",function(e){
   if(a==="merge"){$("file2").click();return}
   if(a==="addextra"){ui.tab="resumen";setTabs();renderAll();var xn=$("xName");if(xn){xn.value=ui.q;$("xQty").focus()}return}
   if(a==="xadd"){var n=$("xName").value.trim(),q=num($("xQty").value);if(!n||q==null){toast("Escribe el nombre y la cantidad.");return}
-    S.extras.push({name:n,code:$("xCode").value.trim(),qty:q,note:""});persist();renderAll();toast("Agregado para ingresar: "+n);return}
-  if(a==="xdel"){S.extras.splice(Number(b.getAttribute("data-i")),1);persist();renderAll();return}
+    var xid="+X:"+Date.now().toString(36);S.extras.push({id:xid,name:n,code:$("xCode").value.trim(),qty:q,note:""});markDirty(xid);persist();renderAll();toast("Agregado para ingresar: "+n);return}
+  if(a==="xdel"){var xr=S.extras.splice(Number(b.getAttribute("data-i")),1)[0];if(xr&&xr.id)markDirty(xr.id);persist();renderAll();return}
   if(a==="zeroall"){modal('<h3>¿Marcar pendientes como 0?</h3><p>Las '+stats(S).pend+' líneas sin contar quedarán con conteo 0 y saldrán como faltantes.</p><div class="drow"><button class="btn" data-a="mclose">Cancelar</button><button class="btn danger" data-a="dozero">Marcar como 0</button></div>');return}
-  if(a==="dozero"){S.items.forEach(function(it){if(!counted(it))it.parts=[0]});hist=[];persist(true);closeModal();renderAll();toast("Pendientes marcados como 0");return}
+  if(a==="dozero"){S.items.forEach(function(it){if(!counted(it)){it.parts=[0];markDirty(it.code)}});hist=[];persist(true);closeModal();renderAll();toast("Pendientes marcados como 0");return}
   var row=b.closest(".row");if(!row)return;
   var it=byCode[row.getAttribute("data-c")];if(!it)return;
   if(a==="open"){ui.open=ui.open===it.code?null:it.code;var prev=document.querySelector(".row .detail");renderListKeep();return}
   if(a==="close"){ui.open=null;updateRow(it.code);return}
   if(a==="plus")change(it,function(x){if(!x.parts.length)x.parts=[1];else x.parts[x.parts.length-1]+=1});
   else if(a==="minus")change(it,function(x){if(!x.parts.length)x.parts=[0];else{var l=x.parts.length-1;if(x.parts[l]>0)x.parts[l]-=1;else if(l>0)x.parts.pop()}});
-  else if(a==="eq")change(it,function(x){x.parts=[x.stock]});
+  else if(a==="eq")change(it,function(x){x.parts=[Math.max(0,x.stock-othersSum(x))]});
   else if(a==="zero")change(it,function(x){x.parts=[0]});
   else if(a==="clear")change(it,function(x){x.parts=[]},"Conteo borrado: "+it.name);
   else if(a==="addpart")change(it,function(x){x.parts.push(0)});
@@ -803,6 +978,7 @@ document.addEventListener("change",function(e){
   var a=el.getAttribute&&el.getAttribute("data-a");if(!a)return;
   var row=el.closest(".row");if(!row)return;var it=byCode[row.getAttribute("data-c")];if(!it)return;
   if(a==="qty"){var p=parseExpr(el.value);if(p==null){toast("Escribe un número, o varios con + (ej. 29+43).");updateRow(it.code);return}
+    var os=othersSum(it);if(p.length===1&&os>0)p=[Math.max(0,p[0]-os)];
     if(p.join("+")!==it.parts.join("+"))change(it,function(x){x.parts=p})}
   if(a==="notetxt"){var v=el.value.trim();if(v!==it.note)change(it,function(x){x.note=v})}
 });
